@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Gestão de Processos & Escritório — Dashboard</title>
+  <style>
+    :root{--radius:14px}
+    body{font-family:sans-serif; background:#f8fafc; margin:0; color:#0f172a}
+    header{position:sticky; top:0; background:#fff; border-bottom:1px solid #e5e7eb; z-index:10}
+    .wrap{max-width:1200px; margin:0 auto; padding:14px}
+    .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .grid{display:grid; gap:12px}
+    .grid-2{grid-template-columns:repeat(2,1fr)}
+    .grid-3{grid-template-columns:repeat(3,1fr)}
+    .btn{border:1px solid #e5e7eb; border-radius:12px; padding:8px 12px; background:#fff; cursor:pointer}
+    .btn.primary{background:#000; color:#fff; border-color:#000}
+    .card{background:#fff; border:1px solid #e5e7eb; border-radius:var(--radius); padding:14px}
+    .kpi{background:#fff; border:1px solid #e5e7eb; border-radius:var(--radius); padding:16px; text-align:center}
+    .kpi .l{font-size:12px; color:#64748b; text-transform:uppercase}
+    .kpi .v{font-size:22px; font-weight:700}
+    .muted{color:#64748b}
+    table{width:100%; border-collapse:collapse}
+    th,td{padding:10px; border-top:1px solid #e5e7eb; text-align:left}
+    th{background:#f1f5f9}
+    .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center}
+    .modal{background:#fff; padding:16px; border-radius:16px; max-width:800px; width:100%}
+    .input{border:1px solid #e5e7eb; border-radius:12px; padding:8px; width:100%}
+    @media(max-width:960px){.grid-2,.grid-3{grid-template-columns:1fr}}
+  </style>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="wrap row" style="justify-content:space-between">
+      <h2>Gestão de Processos & Escritório</h2>
+      <div class="row">
+        <button id="btn-config" class="btn">⚙️ Configurações</button>
+        <button id="btn-new" class="btn primary">Novo Registro</button>
+      </div>
+    </div>
+  </header>
+  <div id="root" class="wrap"></div>
+
+  <script type="text/babel">
+    const {useState,useEffect} = React;
+    const STORAGE_KEY="gestao-db";
+    const WH_URL_KEY="wh-url";
+    const WH_NUM_KEY="wh-num";
+    const BEARER="Bearer E383FCAF68E0-402E-8F7D-047339973ACE";
+
+    const parseISO=s=>{if(!s)return null;const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)};
+    const dateBR=s=>{const d=parseISO(s);return d?d.toLocaleDateString("pt-BR"):""};
+    const currency=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
+    const daysUntil=iso=>{const d=parseISO(iso);if(!d)return Infinity;const t=new Date();t.setHours(0,0,0,0);return Math.ceil((d-t)/86400000)};
+    const daysUntilBirthday=iso=>{const d=parseISO(iso);if(!d)return Infinity;const t=new Date();t.setHours(0,0,0,0);let n=new Date(t.getFullYear(),d.getMonth(),d.getDate());if(n<t)n.setFullYear(t.getFullYear()+1);return Math.ceil((n-t)/86400000)};
+
+    async function enviarWebhook(url,payload){
+      try{
+        await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","Authorization":BEARER},body:JSON.stringify(payload)});
+      }catch(e){console.error(e);}
+    }
+
+    function Modal({open,onClose,title,children}){
+      if(!open) return null;
+      return <div className="modal-bg"><div className="modal">
+        <div className="row" style={{justifyContent:"space-between"}}>
+          <h3>{title}</h3><button className="btn" onClick={onClose}>Fechar</button>
+        </div>
+        <div style={{marginTop:10}}>{children}</div>
+      </div></div>;
+    }
+
+    function App(){
+      const [db,setDb]=useState(()=>JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"));
+      const [sel,setSel]=useState(null);
+      const [showForm,setShowForm]=useState(false);
+      const [conf,setConf]=useState(false);
+      const [whUrl,setWhUrl]=useState(localStorage.getItem(WH_URL_KEY)||"");
+      const [whNum,setWhNum]=useState(localStorage.getItem(WH_NUM_KEY)||"");
+      const [dias,setDias]=useState(7);
+
+      useEffect(()=>localStorage.setItem(STORAGE_KEY,JSON.stringify(db)),[db]);
+      useEffect(()=>localStorage.setItem(WH_URL_KEY,whUrl),[whUrl]);
+      useEffect(()=>localStorage.setItem(WH_NUM_KEY,whNum),[whNum]);
+
+      // Webhooks automáticos
+      useEffect(()=>{
+        db.forEach(c=>{
+          if(c.nascimento && daysUntilBirthday(c.nascimento)===0 && whUrl&&whNum)
+            enviarWebhook(whUrl,{number:whNum,text:`🎂 Hoje é aniversário de ${c.nome}`});
+          (c.prazos||[]).forEach(p=>{
+            if(daysUntil(p.data)===0 && whUrl&&whNum)
+              enviarWebhook(whUrl,{number:whNum,text:`⚖️ Prazo vence hoje (${p.titulo}) de ${c.nome}`});
+          });
+        });
+      },[db,whUrl,whNum]);
+
+      const salvar=()=>{if(sel.id){setDb(db.map(x=>x.id===sel.id?sel:x))}else{sel.id=Date.now();setDb([...db,sel])}setShowForm(false)};
+      const novo=()=>setSel({nome:"",nascimento:"",cidade:"",especie:"",indicacao:"",andamento:"",rec:0,desp:0,prazos:[]})||setShowForm(true);
+      const totalRec=db.reduce((s,c)=>s+Number(c.rec||0),0);
+      const totalDesp=db.reduce((s,c)=>s+Number(c.desp||0),0);
+
+      const expJSON=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(db)],{type:"application/json"}));a.download="dados.json";a.click()};
+      const impJSON=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setDb(JSON.parse(ev.target.result));r.readAsText(f)};
+      const expCSV=()=>{let csv="Cliente;Nascimento;Cidade;Serviço;Indicação;Andamento;Receitas;Despesas\\n";db.forEach(c=>{csv+=`${c.nome};${c.nascimento};${c.cidade};${c.especie};${c.indicacao};${c.andamento};${c.rec};${c.desp}\\n`});const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="dados.csv";a.click()};
+
+      const proximosAniversarios=db.filter(c=>c.nascimento && daysUntilBirthday(c.nascimento)<=dias);
+      const proximosPrazos=db.flatMap(c=>(c.prazos||[]).map(p=>({...p,cliente:c.nome}))).filter(p=>daysUntil(p.data)<=dias);
+
+      return <div className="grid">
+        <div className="grid grid-3">
+          <div className="kpi"><div className="l">Clientes</div><div className="v">{db.length}</div></div>
+          <div className="kpi"><div className="l">Receitas</div><div className="v">{currency(totalRec)}</div></div>
+          <div className="kpi"><div className="l">Despesas</div><div className="v">{currency(totalDesp)}</div></div>
+        </div>
+
+        <div className="row">
+          <label>Próximos dias:<input type="number" className="input" style={{width:"80px"}} value={dias} onChange={e=>setDias(Number(e.target.value)||7)}/></label>
+        </div>
+
+        <div className="grid grid-2">
+          <div className="card"><h4>🎂 Aniversários</h4>
+            {proximosAniversarios.map(c=><div key={c.id}>{c.nome} — em {daysUntilBirthday(c.nascimento)} dias</div>)}
+            {proximosAniversarios.length===0 && <div className="muted">Nenhum</div>}
+          </div>
+          <div className="card"><h4>⚖️ Prazos</h4>
+            {proximosPrazos.map((p,i)=><div key={i}>{p.cliente} — {p.titulo} em {daysUntil(p.data)} dias</div>)}
+            {proximosPrazos.length===0 && <div className="muted">Nenhum</div>}
+          </div>
+        </div>
+
+        <div className="row no-print">
+          <button className="btn primary" onClick={novo}>➕ Novo</button>
+          <button className="btn" onClick={expJSON}>💾 JSON</button>
+          <button className="btn" onClick={expCSV}>📊 CSV</button>
+          <label className="btn">📂 Importar<input type="file" style={{display:"none"}} accept="application/json" onChange={impJSON}/></label>
+          <button className="btn" onClick={()=>{if(confirm("Apagar tudo?")) setDb([])}}>🗑️ Limpar</button>
+          <button className="btn" onClick={()=>window.print()}>🖨️ Imprimir</button>
+        </div>
+
+        <div className="card">
+          <table>
+            <thead><tr><th>Cliente</th><th>Nasc.</th><th>Cidade</th><th>Serviço</th><th>Indicação</th><th>Andamento</th><th>Receitas</th><th>Despesas</th><th>Ações</th></tr></thead>
+            <tbody>
+              {db.map(c=><tr key={c.id}><td>{c.nome}</td><td>{dateBR(c.nascimento)}</td><td>{c.cidade}</td><td>{c.especie}</td><td>{c.indicacao}</td><td>{c.andamento}</td><td>{currency(c.rec)}</td><td>{currency(c.desp)}</td>
+                <td><button className="btn" onClick={()=>{setSel(c);setShowForm(true)}}>✏️</button><button className="btn" onClick={()=>setDb(db.filter(x=>x.id!==c.id))}>❌</button></td></tr>)}
+              {db.length===0 && <tr><td colSpan="9">Nenhum registro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+
+        <Modal open={conf} onClose={()=>setConf(false)} title="Configurações">
+          <input className="input" value={whUrl} onChange={e=>setWhUrl(e.target.value)} placeholder="URL webhook"/>
+          <input className="input" value={whNum} onChange={e=>setWhNum(e.target.value)} placeholder="Número destino"/>
+          <button className="btn primary" onClick={()=>{if(whUrl&&whNum) enviarWebhook(whUrl,{number:whNum,text:"🔔 Teste OK"})}}>Enviar teste</button>
+        </Modal>
+
+        <Modal open={showForm} onClose={()=>setShowForm(false)} title="Cadastro">
+          {sel && <div className="grid grid-2">
+            <input className="input" value={sel.nome} onChange={e=>setSel({...sel,nome:e.target.value})} placeholder="Nome"/>
+            <input type="date" className="input" value={sel.nascimento} onChange={e=>setSel({...sel,nascimento:e.target.value})}/>
+            <input className="input" value={sel.cidade} onChange={e=>setSel({...sel,cidade:e.target.value})} placeholder="Cidade"/>
+            <input className="input" value={sel.especie} onChange={e=>setSel({...sel,especie:e.target.value})} placeholder="Serviço"/>
+            <input className="input" value={sel.indicacao} onChange={e=>setSel({...sel,indicacao:e.target.value})} placeholder="Indicação"/>
+            <input className="input" value={sel.andamento} onChange={e=>setSel({...sel,andamento:e.target.value})} placeholder="Andamento"/>
+            <input type="number" className="input" value={sel.rec} onChange={e=>setSel({...sel,rec:parseFloat(e.target.value)})} placeholder="Receitas"/>
+            <input type="number" className="input" value={sel.desp} onChange={e=>setSel({...sel,desp:parseFloat(e.target.value)})} placeholder="Despesas"/>
+            <button className="btn primary" onClick={salvar}>Salvar</button>
+          </div>}
+        </Modal>
+      </div>;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
